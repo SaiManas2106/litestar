@@ -402,3 +402,62 @@ def test_named_dependency_explicit_marker() -> None:
         # isn't implicitly treated as a query parameter
         schema = client.get("/schema/openapi.json").json()
         assert schema["paths"]["/"]["get"].get("parameters") is None
+
+
+@pytest.mark.parametrize("query_value", ["5", "abc"], ids=["valid-query", "malformed-query"])
+def test_named_dependency_default_is_not_overridden_by_query(query_value: str) -> None:
+    # https://github.com/litestar-org/litestar/issues/5136
+    @get("/")
+    async def handler(foo: NamedDependency[int] = 1) -> int:
+        return foo
+
+    with create_test_client([handler], raise_server_exceptions=False) as client:
+        response = client.get("/", params={"foo": query_value})
+        assert response.status_code == 200
+        assert response.json() == 1
+
+
+@pytest.mark.parametrize("path", ["/", "/?foo=5", "/?foo=abc"])
+def test_named_dependency_provider_takes_precedence_over_default_and_query(path: str) -> None:
+    async def provide_foo() -> int:
+        return 42
+
+    @get("/", dependencies={"foo": provide_foo})
+    async def handler(foo: NamedDependency[int] = 1) -> int:
+        return foo
+
+    with create_test_client([handler], raise_server_exceptions=False) as client:
+        response = client.get(path)
+        assert response.status_code == 200
+        assert response.json() == 42
+
+
+@pytest.mark.parametrize("query_value", ["5", "abc"], ids=["valid-query", "malformed-query"])
+def test_named_dependency_default_in_provider_is_not_overridden_by_query(query_value: str) -> None:
+    async def provide_value(foo: NamedDependency[int] = 1) -> int:
+        return foo
+
+    @get("/", dependencies={"value": provide_value})
+    async def handler(value: NamedDependency[int]) -> int:
+        return value
+
+    with create_test_client([handler], raise_server_exceptions=False) as client:
+        response = client.get("/", params={"foo": query_value})
+        assert response.status_code == 200
+        assert response.json() == 1
+
+
+@pytest.mark.parametrize("path,expected", [("/", 1), ("/?foo=5", 5)])
+def test_deprecated_dependency_marker_preserves_query_fallback(path: str, expected: int) -> None:
+    with pytest.warns(LitestarDeprecationWarning, match="Call to deprecated function 'Dependency'"):
+        legacy_dependency = Dependency()
+
+    @get("/")
+    async def handler(foo: Annotated[int, legacy_dependency] = 1) -> int:
+        return foo
+
+    with pytest.warns(LitestarDeprecationWarning, match="Dependency parameter 'foo' declared using deprecated"):
+        with create_test_client([handler]) as client:
+            response = client.get(path)
+            assert response.status_code == 200
+            assert response.json() == expected

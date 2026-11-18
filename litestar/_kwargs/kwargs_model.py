@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, get_origin
 
 from anyio import create_task_group
 
+from litestar import di
 from litestar._kwargs.cleanup import DependencyCleanupGroup
 from litestar._kwargs.dependencies import (
     DependencyContainer,
@@ -357,10 +358,11 @@ class KwargsModel:
         sequence_query_parameter_names = {p.field_alias for p in expected_query_parameters if p.is_sequence}
 
         for param in param_definitions:
-            # legacy quirk: when using implicit style, dependencies with no providers
-            # but a default value are actually treated as query parameters by the
-            # injection mechanism, so we add them back as such
-            if param.param_type == ParamType.DEPENDENCY:
+            # Preserve the query fallback for the deprecated Dependency() marker,
+            # but never read explicitly marked NamedDependency fields from the query.
+            if param.param_type == ParamType.DEPENDENCY and not field_definitions[param.field_name].has_metadata(
+                di.Dependency
+            ):
                 expected_query_parameters.add(param)
 
             if legacy_style := param.legacy_style:
